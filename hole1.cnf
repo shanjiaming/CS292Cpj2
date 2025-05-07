@@ -1,0 +1,11 @@
+c File:  hole1.cnf
+c
+c DESCRIPTION: Pigeon hole problem of placing n (for file holen) pigeons
+c              in n+1 holes without placing 2 pigeons in the same hole
+c
+c NOTE: Not satisfiable - 2 pigeons must go into 1 hole
+c
+p cnf 2 3
+-1     -2    0
+ 1          0
+ 2          0 
