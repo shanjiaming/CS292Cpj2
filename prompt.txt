@@ -1,0 +1,7 @@
+use 
+make install
+then
+z4 hole1.cnf -s cdcl -c -v debug
+To see how the program run.
+
+Read readme to understand the project. I am fixing cdcl proof. Please only change the file cdcl.ml file.Run and fix the code, until it is correct.

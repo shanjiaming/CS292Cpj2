@@ -40,29 +40,29 @@ let run (level : int) (a : Assign.t) (cs : Clause.t list) : result * Assign.t =
         )
       )
     in
-    Logs.debug (fun m -> m "BCP Initial Check: all_satisfied=true. Unassigned vars in clauses: %a" Fmt.(list Var.pp) (Set.to_list unassigned_vars));
+    (* Logs.debug (fun m -> m "BCP Initial Check: all_satisfied=true. Unassigned vars in clauses: %a" Fmt.(list Var.pp) (Set.to_list unassigned_vars)); *)
     if Set.is_empty unassigned_vars then
       (* All relevant vars assigned, truly Sat for BCP context *)
       begin
-        Logs.debug (fun m -> m "BCP Initial Check: Returning Sat, no unassigned vars.");
+        (* Logs.debug (fun m -> m "BCP Initial Check: Returning Sat, no unassigned vars."); *)
         Sat, a
       end
     else
       (* Assign all unassigned vars to true as implications *)
       begin
-        Logs.debug (fun m -> m "BCP Initial Check: Assigning %d unassigned vars positive as implications..." (Set.length unassigned_vars));
+        (* Logs.debug (fun m -> m "BCP Initial Check: Assigning %d unassigned vars positive as implications..." (Set.length unassigned_vars)); *)
         let final_a = 
           Set.fold unassigned_vars ~init:a ~f:(fun current_a var ->
             (* Use assign_implied with an empty clause as the reason *)
             Assign.assign_implied current_a level Clause.empty (Lit.make_pos var)
           )
         in
-        Logs.debug (fun m -> m "BCP Initial Check: Returning Sat, final assignment: %a" Assign.pp final_a);
+        (* Logs.debug (fun m -> m "BCP Initial Check: Returning Sat, final assignment: %a" Assign.pp final_a); *)
         Sat, final_a
       end
   else
     begin
-      Logs.debug (fun m -> m "BCP Initial Check: all_satisfied=false. Proceeding to propagation.");
+      (* Logs.debug (fun m -> m "BCP Initial Check: all_satisfied=false. Proceeding to propagation."); *)
       (* Check for initial conflict first before starting BCP loop *)
       let initial_unsat_clause =
         List.find cs ~f:(fun c -> 
@@ -73,7 +73,7 @@ let run (level : int) (a : Assign.t) (cs : Clause.t list) : result * Assign.t =
       in
       match initial_unsat_clause with
       | Some c -> 
-          Logs.debug (fun m -> m "BCP Initial Check: Found initial conflict: %a" Clause.pp c);
+          (* Logs.debug (fun m -> m "BCP Initial Check: Found initial conflict: %a" Clause.pp c); *)
           Unsat c, a
       | None ->
           let rec bcp assign =
@@ -87,7 +87,7 @@ let run (level : int) (a : Assign.t) (cs : Clause.t list) : result * Assign.t =
                 | Unit l -> Some (l, c)
                 | Unresolved -> None)
             in
-            Logs.debug (fun m -> m "BCP loop: Found %d unit/unsat clauses." (List.length unit_clauses));
+            (* Logs.debug (fun m -> m "BCP loop: Found %d unit/unsat clauses." (List.length unit_clauses)); *)
             (* Optionally log the clauses themselves if needed, could be verbose *) 
             (* Logs.debug (fun m -> m "BCP loop: Unit/Unsat pairs: %a" Fmt.(list (pair Lit.pp Clause.pp)) unit_clauses); *)
             
@@ -110,29 +110,29 @@ let run (level : int) (a : Assign.t) (cs : Clause.t list) : result * Assign.t =
                     )
                   )
                 in
-                Logs.debug (fun m -> m "BCP loop end check: All clauses satisfied? %b" final_status_satisfied);
-                Logs.debug (fun m -> m "BCP loop end check: Unassigned vars in clauses: %a" Fmt.(list Var.pp) (Set.to_list remaining_unassigned_in_clauses));
+                (* Logs.debug (fun m -> m "BCP loop end check: All clauses satisfied? %b" final_status_satisfied); *)
+                (* Logs.debug (fun m -> m "BCP loop end check: Unassigned vars in clauses: %a" Fmt.(list Var.pp) (Set.to_list remaining_unassigned_in_clauses)); *)
                 
                 (* Decide return value based on satisfaction status *)
                 if final_status_satisfied then
                   begin
-                    Logs.debug (fun m -> m "BCP loop: No more unit clauses. All clauses SAT. Returning Sat.");
+                    (* Logs.debug (fun m -> m "BCP loop: No more unit clauses. All clauses SAT. Returning Sat."); *)
                     Sat, assign
                   end
                 else
                   begin
-                    Logs.debug (fun m -> m "BCP loop: No more unit clauses. Clauses not SAT. Returning Unknown.");
+                    (* Logs.debug (fun m -> m "BCP loop: No more unit clauses. Clauses not SAT. Returning Unknown."); *)
                     Unknown, assign
                   end
             | (l, c) :: _ ->
                 if Lit.equal l Lit.dummy then
                   begin
-                    Logs.debug (fun m -> m "BCP loop: Found conflict: %a" Clause.pp c);
+                    (* Logs.debug (fun m -> m "BCP loop: Found conflict: %a" Clause.pp c); *)
                     Unsat c, assign (* Conflict detected *)
                   end
                 else
                   begin
-                    Logs.debug (fun m -> m "BCP loop: Propagating literal %a from clause %a" Lit.pp l Clause.pp c);
+                    (* Logs.debug (fun m -> m "BCP loop: Propagating literal %a from clause %a" Lit.pp l Clause.pp c); *)
                     let assign' = Assign.assign_implied assign level c l in
                     (* Logs.debug (fun m -> m "BCP: assign: %a" Assign.pp assign'); *)
                     bcp assign' (* Continue BCP with updated assignment *)

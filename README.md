@@ -351,6 +351,8 @@ make install
 z4 <path-to-cnf-file> -s dpll -c
 ```
 
+_build/default/bin/main.exe hole1.cnf -s cdcl -c -v debug
+
 ### Scoring
 
 The test suite is worth 10 points. You must pass all benchmarks to receive credit.
