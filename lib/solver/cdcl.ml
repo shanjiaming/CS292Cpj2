@@ -235,7 +235,7 @@ struct
 
   let rec solve (s0 : State.t) : State.t =
     Logs.debug (fun m -> m ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-    Logs.debug (fun m -> m "Input state: %a" State.pp s0);
+    (* Logs.debug (fun m -> m "Input state: %a" State.pp s0); *)
     Logs.debug (fun m -> m "Learned conflicts:");
     Logs.debug (fun m ->
         m "%a" Fmt.(vbox @@ list Clause.pp) (curr_conflicts ()));
@@ -246,7 +246,7 @@ struct
     (* update the assignment in the solver state *)
     let s = { s0 with a } in
     Logs.debug (fun m -> m "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-    Logs.debug (fun m -> m "State after unit-prop: %a" State.pp s);
+    (* Logs.debug (fun m -> m "State after unit-prop: %a" State.pp s); *)
 
     match r with
     | Sat ->
