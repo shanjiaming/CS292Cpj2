@@ -1,6 +1,7 @@
 (** Conflict-driven clause learning (CDCL) solver *)
 
 open Base
+open Solution
 
 exception Solver_error
 
@@ -37,7 +38,6 @@ struct
   (** A FIFO queue to hold learned conflicts for BCP. *)
   let conflicts_queue : Clause.t Queue.t = Queue.create ()
 
-  (** A set mirroring the contents of [conflicts_queue] for efficient membership testing. *)
   let conflicts_set : (Clause.t, Clause.comparator_witness) Set.t ref = ref (Set.empty (module Clause))
 
   (** Internal record to store lemma info alongside the opaque Script.Lemma.t *)
@@ -104,7 +104,7 @@ struct
           )
         with Assign.Unassigned -> ()
       );
-      
+      (* Logs.debug (fun m -> m "Resolving UIP: current_level_count = %d" !current_level_count); *)
       if !current_level_count <= 1 then
         false
       else
@@ -123,12 +123,112 @@ struct
         
         match Assign.antecedent a latest_lit with
         | None -> 
-            Logs.warn (fun m -> m "Resolve_until_first_uip: latest_lit %a at level %d has no antecedent. Stopping resolution." Lit.pp latest_lit level);
+            (* Logs.warn (fun m -> m "Resolve_until_first_uip: latest_lit %a at level %d has no antecedent. Stopping resolution." Lit.pp latest_lit level); *)
             false 
         | Some antecedent_clause ->
+            (* CORRECTED ASSERTION 1: The antecedent clause (reason for latest_lit) 
+               MUST contain latest_lit itself. *)
+            if not (Set.mem antecedent_clause latest_lit) then
+              Logs.debug (fun m -> m "ASSERT FAIL: Antecedent clause %a does not contain the literal it is explaining: %a" Clause.pp antecedent_clause Lit.pp latest_lit);
+            
+            assert (Set.mem antecedent_clause latest_lit);
+
+            (* ASSERTION 2: Any other literal in the antecedent clause that is also at the current decision level
+               MUST have been implied strictly *before* 'latest_lit'. This is crucial for ensuring progress
+               towards the UIP. A full one-line assert for this is complex as it involves comparing
+               implication order (indices in the 'implied' list).
+               For debugging, you would typically iterate and check: *)
+            (* TEMPORARILY DISABLED FOR DEBUGGING
+            Set.iter antecedent_clause ~f:(fun l_ant ->
+              if not (Lit.equal l_ant latest_lit) then
+                try
+                  if Assign.level_exn a l_ant = level then
+                    (* Find which literal of the same variable actually appears in the implied list *)
+                    let var_of_l_ant = Lit.var l_ant in
+                    let actual_assigned_lit = 
+                      List.find implied ~f:(fun l -> Var.equal (Lit.var l) var_of_l_ant)
+                    in
+                    match actual_assigned_lit, List.findi implied ~f:(fun _ l -> Lit.equal l latest_lit) with
+                    | Some assigned_lit, Some (idx_latest, _) ->
+                        (match List.findi implied ~f:(fun _ l -> Lit.equal l assigned_lit) with
+                        | Some (idx_assigned, _) ->
+                            if not (idx_assigned < idx_latest) then (
+                              Logs.err (fun m -> m "ASSERT FAIL: Variable %a (as %a) not assigned before %a" Var.pp var_of_l_ant Lit.pp assigned_lit Lit.pp latest_lit);
+                              (* DEBUG: Let's examine the state when this assertion fails *)
+                              Logs.err (fun m -> m "=== DEBUGGING ASSERTION 2 FAILURE ===");
+                              Logs.err (fun m -> m "Current decision level: %d" level);
+                              Logs.err (fun m -> m "Current conflict clause: %a" Clause.pp !curr_clause);
+                              Logs.err (fun m -> m "Antecedent clause: %a" Clause.pp antecedent_clause);
+                              Logs.err (fun m -> m "Latest literal: %a" Lit.pp latest_lit);
+                              Logs.err (fun m -> m "Antecedent literal in clause: %a" Lit.pp l_ant);
+                              Logs.err (fun m -> m "Actually assigned literal: %a" Lit.pp assigned_lit);
+                              Logs.err (fun m -> m "Assigned literal index: %d, Latest literal index: %d" idx_assigned idx_latest);
+                              Logs.err (fun m -> m "=== END DEBUGGING ===");
+                              assert false
+                            )
+                        | None -> 
+                            Logs.err (fun m -> m "ASSERT FAIL: Assigned literal %a not found in implied list (should not happen)" Lit.pp assigned_lit);
+                            assert false)
+                    | None, _ -> 
+                        Logs.err (fun m -> m "ASSERT FAIL: Variable %a not found in implied list at level %d" Var.pp var_of_l_ant level);
+                        (* DEBUG: Let's examine the state when this assertion fails *)
+                        Logs.err (fun m -> m "=== DEBUGGING ASSERTION 2 FAILURE ===");
+                        Logs.err (fun m -> m "Current decision level: %d" level);
+                        Logs.err (fun m -> m "Current conflict clause: %a" Clause.pp !curr_clause);
+                        Logs.err (fun m -> m "Antecedent clause: %a" Clause.pp antecedent_clause);
+                        Logs.err (fun m -> m "Latest literal: %a" Lit.pp latest_lit);
+                        Logs.err (fun m -> m "Problematic antecedent literal: %a" Lit.pp l_ant);
+                        (try
+                          let l_ant_level = Assign.level_exn a l_ant in
+                          Logs.err (fun m -> m "l_ant (%a) is at level: %d" Lit.pp l_ant l_ant_level);
+                        with Assign.Unassigned -> 
+                          Logs.err (fun m -> m "l_ant (%a) is UNASSIGNED" Lit.pp l_ant)
+                        );
+                        (try
+                          let latest_level = Assign.level_exn a latest_lit in
+                          Logs.err (fun m -> m "latest_lit (%a) is at level: %d" Lit.pp latest_lit latest_level);
+                        with Assign.Unassigned -> 
+                          Logs.err (fun m -> m "latest_lit (%a) is UNASSIGNED" Lit.pp latest_lit)
+                        );
+                        Logs.err (fun m -> m "Implied list for current level: %a" Fmt.(Dump.list Lit.pp) implied);
+                        Logs.err (fun m -> m "Length of implied list: %d" (List.length implied));
+                        (* Check if l_ant is elsewhere in the assignment *)
+                        (try
+                          let l_ant_value = Eval.lit a.nu l_ant in
+                          Logs.err (fun m -> m "l_ant (%a) has value: %a" Lit.pp l_ant Eval.pp_u l_ant_value);
+                        with _ -> 
+                          Logs.err (fun m -> m "l_ant (%a) value check failed" Lit.pp l_ant)
+                        );
+                        (* Check if latest_lit is elsewhere in the assignment *)
+                        (try
+                          let latest_value = Eval.lit a.nu latest_lit in
+                          Logs.err (fun m -> m "latest_lit (%a) has value: %a" Lit.pp latest_lit Eval.pp_u latest_value);
+                        with _ -> 
+                          Logs.err (fun m -> m "latest_lit (%a) value check failed" Lit.pp latest_lit)
+                        );
+                        Logs.err (fun m -> m "=== END DEBUGGING ===");
+                        assert false
+                    | _, None ->
+                        Logs.err (fun m -> m "ASSERT FAIL: Latest literal %a not found in implied list" Lit.pp latest_lit);
+                        assert false
+                with 
+                | Assign.Unassigned -> 
+                    Logs.err (fun m -> m "ASSERT FAIL: Unassigned literal %a in antecedent" Lit.pp l_ant);
+                    assert false
+                | Assert_failure _ as af -> raise af  (* Re-raise Assert_failure to stop the program *)
+                | ex -> Logs.warn (fun m -> m "Warning during antecedent check for %a : %s" Lit.pp l_ant (Exn.to_string ex))
+            );
+            *)
+
             (* Logs.debug (fun m -> m "Resolving UIP: %a with antecedent %a on %a" Clause.pp !curr_clause Clause.pp antecedent_clause Lit.pp resolution_lit); *)
             let new_clause = Clause.resolve_exn !curr_clause resolution_lit antecedent_clause in
             curr_clause := new_clause;
+            (* ASSERTION 3: The resolution literal itself should no longer be in the current clause. *)
+            assert (not (Set.mem !curr_clause resolution_lit));
+
+            (* ASSERTION 4: The negation of the resolution literal (which was pivotal in the antecedent) 
+               should also not be in the current clause after resolution. *)
+            assert (not (Set.mem !curr_clause (Lit.negate resolution_lit)));
             true
     in
     
@@ -152,11 +252,11 @@ struct
     
     let beta = if !highest_level < level then 0 else !second_highest_level in
     let beta = if beta = 0 && level > 0 then level - 1 else if beta = 0 && level = 0 then -1 else beta in
-    Logs.debug (fun m -> m "UIP clause: %a, beta: %d, highest_level: %d, second_highest: %d, current_level: %d" Clause.pp c_uip beta !highest_level !second_highest_level level);
+    (* Logs.debug (fun m -> m "UIP clause: %a, beta: %d, highest_level: %d, second_highest: %d, current_level: %d" Clause.pp c_uip beta !highest_level !second_highest_level level); *)
 
     let construct_proof (original_unsat_clause : Clause.t) (current_assignment : Assign.t) (target_uip_clause : Clause.t) : Proof.t =
-      Logs.debug (fun m -> m "construct_proof: original_unsat = %a, target_uip = %a" 
-                    Clause.pp original_unsat_clause Clause.pp target_uip_clause);
+      (* Logs.debug (fun m -> m "construct_proof: original_unsat = %a, target_uip = %a"  *)
+                    (* Clause.pp original_unsat_clause Clause.pp target_uip_clause); *)
       let proof_of_original_unsat = Proof.fact original_unsat_clause in
       let rec build_resolution_trace current_iter_clause current_iter_proof visited_lits =
         if Clause.equal current_iter_clause target_uip_clause then
@@ -198,7 +298,7 @@ struct
           let lit_in_c = Set.choose_exn current_c in 
           match Assign.antecedent a (Lit.negate lit_in_c) with
           | Some antecedent_clause ->
-              Logs.debug (fun m -> m "Resolving to empty: %a with antecedent %a on %a" Clause.pp current_c Clause.pp antecedent_clause Lit.pp lit_in_c);
+              (* Logs.debug (fun m -> m "Resolving to empty: %a with antecedent %a on %a" Clause.pp current_c Clause.pp antecedent_clause Lit.pp lit_in_c); *)
               let next_clause = Clause.resolve_exn current_c lit_in_c antecedent_clause in
               let next_proof = Proof.resolve ~left:current_p ~on:lit_in_c ~right:(Proof.fact antecedent_clause) in
               resolve_to_empty next_clause next_proof
@@ -207,16 +307,16 @@ struct
               (current_c, current_p)
       in
       let final_clause, final_proof = resolve_to_empty c_uip proof_of_c_uip in
-      Logs.debug (fun m -> m "Resolved to final clause: %a for UNSAT proof." Clause.pp final_clause);
+      (* Logs.debug (fun m -> m "Resolved to final clause: %a for UNSAT proof." Clause.pp final_clause); *)
       if not (Set.is_empty final_clause) then
          Logs.warn (fun m -> m "Failed to resolve %a to empty clause for UNSAT, final clause is: %a" Clause.pp c_uip Clause.pp final_clause);
       (final_clause, final_proof, beta)
     ) else if Set.is_empty c_uip then (
-      Logs.debug (fun m -> m "UIP analysis resulted directly in empty clause: %a." Clause.pp c_uip);
+      (* Logs.debug (fun m -> m "UIP analysis resulted directly in empty clause: %a." Clause.pp c_uip); *)
       (c_uip, proof_of_c_uip, beta)
     )
     else (
-      Logs.debug (fun m -> m "Standard UIP case: clause %a, beta %d" Clause.pp c_uip beta);
+      (* Logs.debug (fun m -> m "Standard UIP case: clause %a, beta %d" Clause.pp c_uip beta); *)
       (c_uip, proof_of_c_uip, beta)
     )
 
@@ -237,8 +337,8 @@ struct
     Logs.debug (fun m -> m ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
     (* Logs.debug (fun m -> m "Input state: %a" State.pp s0); *)
     Logs.debug (fun m -> m "Learned conflicts:");
-    Logs.debug (fun m ->
-        m "%a" Fmt.(vbox @@ list Clause.pp) (curr_conflicts ()));
+    (* Logs.debug (fun m -> *)
+        (* m "%a" Fmt.(vbox @@ list Clause.pp) (curr_conflicts ())); *)
 
     check_restart ();
 
@@ -253,10 +353,10 @@ struct
         Logs.debug (fun m -> m "BCP: SAT");
         s
     | Unsat c ->
-        Logs.debug (fun m -> m "BCP: Found unsat clause: %a" Clause.pp c);
+        (* Logs.debug (fun m -> m "BCP: Found unsat clause: %a" Clause.pp c); *)
         let c, proof, beta = analyze s.level s.a c in
         learn_conflict s c proof;
-        Logs.debug (fun m -> m "Backtracking to level %d" beta);
+        (* Logs.debug (fun m -> m "Backtracking to level %d" beta); *)
         raise (Backtrack beta)
     | Unknown ->
         Logs.debug (fun m -> m "BCP: Unknown");
@@ -274,7 +374,9 @@ struct
         (* 每次主决策时输出当前决策层和trail长度 *)
         let { Assign.Trail.implied; _ } = Assign.trail_exn s.a s.level in
         let trail_len = 1 + List.length implied in
-        Logs.app (fun m -> m "[Decide] Level: %d, Trail length: %d" s.level trail_len);
+        (* 减少日志频率，只在每10000次决策时输出 *)
+        if trail_len % 10000 = 0 then
+          Logs.app (fun m -> m "[Decide] Level: %d, Trail length: %d" s.level trail_len);
         let next_state = State.decide s decision in
         try
           solve next_state
@@ -286,35 +388,38 @@ struct
         (* END SOLUTION - Part 2 *)
 
   let rec run () : Solution.t =
-    let s = State.init in
-    try
-      let s' = solve s in
-      SATISFIABLE s'.a.nu
-    with
-    | Backtrack _ ->
-        (* backtracked to the initial level, so unsat overall *)
-        Logs.debug (fun m -> m "Backtracked to the initial level");
-        
-        let final_proof_opt =
-          List.find_map !lemmas ~f:(fun ili -> (* renamed lemma to ili *)
-              if Set.is_empty ili.goal_clause then Some ili.proof_object else None)
-        in
+    let rec run_loop () =
+      let s = State.init in
+      try
+        let s' = solve s in
+        SATISFIABLE s'.a.nu
+      with
+      | Backtrack _ ->
+          (* backtracked to the initial level, so unsat overall *)
+          Logs.debug (fun m -> m "Backtracked to the initial level");
+          
+          let final_proof_opt =
+            List.find_map !lemmas ~f:(fun ili -> (* renamed lemma to ili *)
+                if Set.is_empty ili.goal_clause then Some ili.proof_object else None)
+          in
 
-        let final_proof =
-          match final_proof_opt with
-          | Some proof -> 
-              Logs.debug (fun m -> m "Found proof for empty clause among internally stored lemmas.");
-              proof
-          | None ->
-              Logs.err (fun m -> m "CDCL reached UNSAT state, but no lemma proving the empty clause was found in the learned set. This indicates an internal error.");
-              Proof.fact Clause.empty 
-        in
-        
-        let script_lemmas_list = List.map ~f:(fun ili -> ili.script_lemma_obj) (List.rev !lemmas) in
-        UNSATISFIABLE (Script.make script_lemmas_list final_proof)
-    | Restart ->
-        (* restart the solver *)
-        run ()
+          let final_proof =
+            match final_proof_opt with
+            | Some proof -> 
+                Logs.debug (fun m -> m "Found proof for empty clause among internally stored lemmas.");
+                proof
+            | None ->
+                Logs.err (fun m -> m "CDCL reached UNSAT state, but no lemma proving the empty clause was found in the learned set. This indicates an internal error.");
+                Proof.fact Clause.empty 
+          in
+          
+          let script_lemmas_list = List.map ~f:(fun ili -> ili.script_lemma_obj) (List.rev !lemmas) in
+          UNSATISFIABLE (Script.make script_lemmas_list final_proof)
+      | Restart ->
+          (* restart the solver by continuing the loop *)
+          run_loop ()
+    in
+    run_loop ()
 
   (** Solving result *)
   let result = run ()
